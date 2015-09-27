@@ -127,12 +127,24 @@ class DriveFile(DriveObject):
     '''
     A file of indeterminate type
     '''
-    def data_of_type(self, data_type, encoding=None):
-        try:
+    def data_of_type(self, data_type=None, encoding=None):
+        data = b''
+        if self.exportLinks and data_type in self.exportLinks:
             data = self.client.http.request(self.exportLinks[data_type], 'GET')[1]
-        except KeyError: data = b''
+        elif self.downloadUrl:
+            data = self.client.http.request(self.downloadUrl, 'GET')[1]
         return data.decode(encoding) if encoding else data
 
+    def save_as(self, filename, replace=True):
+        path = os.path.abspath(os.path.expanduser(filename))
+        if not replace and os.path.exists(path):
+            return
+        with open(path, 'wb') as file:
+            file.write(self.data)
+
+    @property
+    def data(self):
+        return self.data_of_type()
     @property
     def text(self):
         return self.data_of_type('text/plain', 'utf-8-sig')

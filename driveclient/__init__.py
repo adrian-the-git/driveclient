@@ -146,18 +146,20 @@ class DriveFolder(DriveObject):
     A folder of type application/vnd.google-apps.folder
     '''
     def files_of_type(self, mime_types=None):
+        folder_type = 'application/vnd.google-apps.folder'
         params = {
             'folderId': self.id, 
             'maxResults': 1000,
             'orderBy': 'modifiedDate desc', 
-            'q': 'mimeType != "application/vnd.google-apps.folder"',
+            'q': 'mimeType != "{}"'.format(folder_type),
         }
         if mime_types:
             if isinstance(mime_types, str):
                 mime_types = [mime_types]
             params['q'] = '({})'.format(' or '.join('mimeType="{}"'.format(t) for t in mime_types))
         children = self.client.service.children().list(**params).execute().get('items', [])
-        return [DriveFile(self.client, self.client.service.files().get(fileId=child['id']).execute()) 
+        children = [self.client.service.files().get(fileId=child['id']).execute() for child in children]
+        return [(DriveFolder if child['mimeType'] == folder_type else DriveFile)(self.client, child)
             for child in children]
 
     @property

@@ -1,7 +1,12 @@
 """
-Abstracts away most of the Google Drive API, simplifying the common
-case of reading data from docs in a named directory. Also exposes a 
-service property with which the rest of the API may be used.
+Abstracts away much of what's needed for read-only access to Google
+Drive via its API, simplifying the common case of reading data from
+documents, spreadsheets, and downloading images.
+
+DriveClient instances contain a service property which can be used
+to access the full API as the authenticated user. In order to make
+changes, set an appropriate read/write scope when instantiating a
+client.
 """
 
 import argparse
@@ -67,6 +72,7 @@ class DriveClient(object):
         Retrieve locally cached credentials if available, or 
         request them from the server and store them locally.
         '''
+        #TODO: Move the credential cache to a sane location
         script_dir = os.path.dirname(os.path.realpath(__file__))
         credential_path = os.path.join(script_dir, CREDENTIAL_FILENAME)
 

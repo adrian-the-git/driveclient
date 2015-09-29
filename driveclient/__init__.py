@@ -99,7 +99,8 @@ class DriveClient(object):
         around first getting a folder object from which children
         may be queried
         '''
-        return self.folders(name, 1)[0]
+        folders = self.folders(name, 1)
+        return folders[0] if folders else []
 
     def folders(self, name, limit=1000):
         params = {

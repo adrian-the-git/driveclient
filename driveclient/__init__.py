@@ -22,7 +22,7 @@ from oauth2client import client, tools
 
 
 CLIENT_SECRET_FILENAME = 'client_secret.json'
-CREDENTIAL_FILENAME = '.cached_credentials.json'
+CACHED_CREDENTIALS_FILENAME = 'drive_client.json'
 SCOPES = 'https://www.googleapis.com/auth/drive.readonly'
 
 
@@ -33,8 +33,9 @@ class DriveClient(object):
     operations can be performed by calling methods on that
     folder object (an instance of DriveFolder)
     '''
-    def __init__(self, name, client_secret_filename=CLIENT_SECRET_FILENAME, scopes=SCOPES,
-                 service_account_json_filename=None):
+    def __init__(self, name, client_secret_filename=CLIENT_SECRET_FILENAME, 
+                 cached_credentials_filename=CACHED_CREDENTIALS_FILENAME, 
+                 scopes=SCOPES, service_account_json_filename=None):
         '''
         If a service_account_json_filename is provided, a
         private key will be used instead of the user-assisted
@@ -42,6 +43,15 @@ class DriveClient(object):
         '''
         self.name = name
         self.client_secret_filename = client_secret_filename
+
+        if os.path.isabs(cached_credentials_filename):
+            self.cached_credentials_path = cached_credentials_filename
+        else:
+            credential_dir = os.path.join(os.path.expanduser('~'), '.credentials')
+            if not os.path.exists(credential_dir):
+                os.makedirs(credential_dir)
+            self.cached_credentials_path = os.path.join(credential_dir, cached_credentials_filename)
+
         self.scopes = scopes
         self.service_account_json_filename = service_account_json_filename
         self.flags = argparse.ArgumentParser(parents=[tools.argparser]).parse_args()
@@ -72,11 +82,7 @@ class DriveClient(object):
         Retrieve locally cached credentials if available, or 
         request them from the server and store them locally.
         '''
-        #TODO: Move the credential cache to a sane location
-        script_dir = os.path.dirname(os.path.realpath(__file__))
-        credential_path = os.path.join(script_dir, CREDENTIAL_FILENAME)
-
-        store = oauth2client.file.Storage(credential_path)
+        store = oauth2client.file.Storage(self.cached_credentials_path)
         credentials = store.get()
         if not credentials or credentials.invalid:
             if self.service_account_json_filename:

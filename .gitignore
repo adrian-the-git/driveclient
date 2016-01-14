@@ -1,4 +1,5 @@
 build
 dist
+testing
 *.pyc
 *.egg-info

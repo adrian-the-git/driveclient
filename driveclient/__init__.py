@@ -96,30 +96,47 @@ class DriveClient(object):
                 credentials = tools.run_flow(flow, store, self.flags)
         return credentials
 
-    def by_id(self, id):
+    def id(self, id):
+        '''
+        Get a file by its globally unique id.
+        '''
         try:
             return DriveObject(self, self.service.files().get(fileId=id).execute())
         except HttpError: pass
 
-    def by_query(self, q, maxResults=1000, limit=1000):
+    def query(self, q, parent=None, maxResults=1000, limit=1000):
+        '''
+        Perform a query, optionally limited by a single parent and/or maxResults
+        '''
         maxResults = min(maxResults, limit) # "limit" is more pythonic; accept either
         params = {
             'maxResults': maxResults,
             'orderBy': 'modifiedDate desc',
             'q': q,
         }
-        files = [DriveObject(self, f) for f in self.service.files().list(**params).execute()['items']]
+        if parent:
+            params['folderId'] = parent.id if isinstance(parent, DriveObject) else parent
+            filerefs = self.service.children().list(**params).execute()['items']
+            files = [DriveObject(self, self.service.files().get(fileId=child['id']).execute()) for child in filerefs]
+        else:
+            files = [DriveObject(self, f) for f in self.service.files().list(**params).execute()['items']]
         if maxResults > 1:                  # Caller expects a list which can be empty
             return files
         return files[0] if files else None
 
     def file(self, name='', id=''):
+        '''
+        Get a single file by name or id
+        '''
         q = 'title="{}" and mimeType!="{}" and trashed=false'.format(name, DriveObject.folder_type)
-        return self.by_id(id) if id else self.by_query(q, maxResults=1)
+        return self.id(id) if id else self.query(q, maxResults=1)
 
     def folder(self, name='', id=''):
+        '''
+        Get a single folder by name or id
+        '''
         q = 'title="{}" and mimeType="{}" and trashed=false'.format(name, DriveObject.folder_type)
-        return self.by_id(id) if id else self.by_query(q, maxResults=1)
+        return self.id(id) if id else self.query(q, maxResults=1)
 
 
 class DriveObject(object):
@@ -185,19 +202,29 @@ class DriveFolder(DriveObject):
     A folder with methods for getting documents contained therein
     '''
     def files_of_type(self, mime_types=None):
-        params = {
-            'folderId': self.id,
-            'maxResults': 1000,
-            'orderBy': 'modifiedDate desc',
-            'q': 'mimeType != "{}"'.format(DriveObject.folder_type)
-        }
+        '''
+        Get files by one or more mime_types
+        '''
+        q = 'mimeType != "{}"'.format(DriveObject.folder_type)
         if mime_types:
             if isinstance(mime_types, str):
                 mime_types = [mime_types]
-            params['q'] = '({})'.format(' or '.join('mimeType="{}"'.format(t) for t in mime_types))
-        childrefs = self.client.service.children().list(**params).execute().get('items', [])
-        children = [self.client.service.files().get(fileId=child['id']).execute() for child in childrefs]
-        return [DriveObject(self.client, child) for child in children]
+            q = '({})'.format(' or '.join('mimeType="{}"'.format(t) for t in mime_types))
+        return self.client.query(q, parent=self)
+
+    def file(self, name):
+        '''
+        Get a single child file by name
+        '''
+        q = 'mimeType != "{}" and title = "{}"'.format(DriveObject.folder_type, name)
+        return self.client.query(q, parent=self, maxResults=1)
+
+    def folder(self, name):
+        '''
+        Get a single child folder by name
+        '''
+        q = 'mimeType = "{}" and title = "{}"'.format(DriveObject.folder_type, name)
+        return self.client.query(q, parent=self, maxResults=1)
 
     @property
     def files(self):

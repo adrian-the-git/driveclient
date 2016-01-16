@@ -17,6 +17,7 @@ from functools import partial
 import httplib2
 import oauth2client
 from apiclient import discovery
+from googleapiclient.errors import HttpError
 from oauth2client import client, tools
 
 
@@ -96,7 +97,9 @@ class DriveClient(object):
         return credentials
 
     def by_id(self, id):
-        return DriveObject(self, self.service.files().get(fileId=id).execute())
+        try:
+            return DriveObject(self, self.service.files().get(fileId=id).execute())
+        except HttpError: pass
 
     def by_query(self, q, maxResults=1000, limit=1000):
         maxResults = min(maxResults, limit) # "limit" is more pythonic; accept either

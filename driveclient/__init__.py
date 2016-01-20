@@ -96,7 +96,7 @@ class DriveClient(object):
                 credentials = tools.run_flow(flow, store, self.flags)
         return credentials
 
-    def id(self, id):
+    def get(self, id):
         '''
         Get a file by its globally unique id.
         '''
@@ -129,14 +129,14 @@ class DriveClient(object):
         Get a single file by name or id
         '''
         q = 'title="{}" and mimeType!="{}" and trashed=false'.format(name, DriveObject.folder_type)
-        return self.id(id) if id else self.query(q, maxResults=1)
+        return self.get(id) if id else self.query(q, maxResults=1)
 
     def folder(self, name='', id=''):
         '''
         Get a single folder by name or id
         '''
         q = 'title="{}" and mimeType="{}" and trashed=false'.format(name, DriveObject.folder_type)
-        return self.id(id) if id else self.query(q, maxResults=1)
+        return self.get(id) if id else self.query(q, maxResults=1)
 
 
 class DriveObject(object):

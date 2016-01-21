@@ -52,7 +52,7 @@ class DriveClient(object):
 
         self.scopes = scopes
         self.service_account_json_filename = service_account_json_filename
-        self.flags = argparse.ArgumentParser(parents=[tools.argparser]).parse_args()
+        self.flags = argparse.ArgumentParser(parents=[tools.argparser]).parse_known_args()
 
     @property
     def http(self):

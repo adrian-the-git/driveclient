@@ -88,7 +88,7 @@ class DriveClient(object):
                     account_info = json.load(f)
                 email = account_info['client_email']
                 key = account_info['private_key'].encode('utf8')
-                credentials = client.SignedJwtAssertionCredentials(email, key, SCOPES)
+                credentials = client.SignedJwtAssertionCredentials(email, key, self.scopes)
                 store.put(credentials)
             else:
                 flow = client.flow_from_clientsecrets(self.client_secret_filename, self.scopes)

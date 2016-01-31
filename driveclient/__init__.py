@@ -104,6 +104,14 @@ class DriveClient(object):
             return DriveObject(self, self.service.files().get(fileId=id).execute())
         except HttpError: pass
 
+    def change(self, changeId):
+        '''
+        Get a file by its ephemeral change id.
+        '''
+        try:
+            return DriveObject(self, self.service.changes().get(changeId=changeId).execute()['file'])
+        except HttpError: pass
+
     def query(self, q, parent=None, maxResults=1000, limit=1000):
         '''
         Perform a query, optionally limited by a single parent and/or maxResults

@@ -12,7 +12,9 @@ import argparse
 import csv
 import os
 import json
-from functools import partial
+from functools import wraps
+from threading import Semaphore, Timer
+
 
 import httplib2
 import oauth2client
@@ -24,6 +26,28 @@ from oauth2client import client, tools
 CLIENT_SECRET_FILENAME = 'client_secret.json'
 CACHED_CREDENTIALS_FILENAME = 'drive_client.json'
 SCOPES = 'https://www.googleapis.com/auth/drive.readonly'
+
+# Google quota is either 100requests/10s or 1000requests/100s
+QUOTA_LIMIT = 95
+QUOTA_EVERY = 10
+
+
+def ratelimit(limit, every):
+    '''
+    Rate-limit decorator to wrap the service property and avoid going over quota
+    '''
+    def limitdecorator(f):
+        semaphore = Semaphore(limit)
+        @wraps(f)
+        def wrapper(*a, **kw):
+            semaphore.acquire()
+            result = f(*a, **kw)
+            timer = Timer(every, semaphore.release)
+            timer.setDaemon(True)
+            timer.start()
+            return result
+        return wrapper
+    return limitdecorator
 
 
 class DriveClient(object):
@@ -65,6 +89,7 @@ class DriveClient(object):
         return self._http
 
     @property
+    @ratelimit(limit=QUOTA_LIMIT, every=QUOTA_EVERY)
     def service(self):
         '''
         Use apiclient's service discovery to get a drive api service object

@@ -27,28 +27,6 @@ CLIENT_SECRET_FILENAME = 'client_secret.json'
 CACHED_CREDENTIALS_FILENAME = 'drive_client.json'
 SCOPES = 'https://www.googleapis.com/auth/drive.readonly'
 
-# Google quota is either 100requests/10s or 1000requests/100s
-QUOTA_LIMIT = 95
-QUOTA_EVERY = 10
-
-
-def ratelimit(limit, every):
-    '''
-    Rate-limit decorator to wrap the service property and avoid going over quota
-    '''
-    def limitdecorator(f):
-        semaphore = Semaphore(limit)
-        @wraps(f)
-        def wrapper(*a, **kw):
-            semaphore.acquire()
-            result = f(*a, **kw)
-            timer = Timer(every, semaphore.release)
-            timer.setDaemon(True)
-            timer.start()
-            return result
-        return wrapper
-    return limitdecorator
-
 
 class DriveClient(object):
     '''
@@ -58,7 +36,8 @@ class DriveClient(object):
     '''
     def __init__(self, name, client_secret_filename=CLIENT_SECRET_FILENAME,
                  cached_credentials_filename=CACHED_CREDENTIALS_FILENAME,
-                 scopes=SCOPES, service_account_json_filename=None):
+                 scopes=SCOPES, service_account_json_filename=None,
+                 limit_service_calls_per_second=10):
         '''
         If a service_account_json_filename is provided, a private key will be
         used instead of the user-assisted OAuth flow which requires a browser.
@@ -78,6 +57,8 @@ class DriveClient(object):
         self.service_account_json_filename = service_account_json_filename
         self.flags,_ = argparse.ArgumentParser(parents=[tools.argparser]).parse_known_args()
 
+        self.quota = Semaphore(limit_service_calls_per_second)
+
     @property
     def http(self):
         '''
@@ -89,14 +70,21 @@ class DriveClient(object):
         return self._http
 
     @property
-    @ratelimit(limit=QUOTA_LIMIT, every=QUOTA_EVERY)
     def service(self):
         '''
         Use apiclient's service discovery to get a drive api service object
-        from which to make drive api calls.
+        from which to make drive api calls. The limit_service_calls_per_second
+        param of the DriveClient instance determines how frequently this 
+        property can be accessed. Use this to stay under quota limits.
         '''
+        self.quota.acquire()
+
         try: self._service
         except AttributeError: self._service = discovery.build('drive', 'v2', http=self.http)
+
+        timer = Timer(1, self.quota.release)
+        timer.setDaemon(True)
+        timer.start()
         return self._service
 
     @property

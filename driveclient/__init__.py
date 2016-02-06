@@ -106,9 +106,10 @@ class DriveClient(object):
                 return request.execute()
             except HttpError as error:
                 reason = error._get_reason().lower().replace(' ','')
-                if 'ratelimitexceeded' not in reason:
-                    return
-                time.sleep(2**i + random.random())
+                if 'ratelimitexceeded' in reason:
+                    time.sleep(2**i + random.random())
+                    continue
+                raise
 
     def get(self, id):
         '''

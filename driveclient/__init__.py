@@ -105,11 +105,10 @@ class DriveClient(object):
             try:
                 return request.execute()
             except HttpError as error:
-                print('error: {} returned "{}"'.format(request.methodId, error._get_reason()))
-                if error._get_reason().lower().replace(' ','') == 'userratelimitexceeded':
-                    t = 2**i + random.random()
-                    print("retry: sleeping {}s to avoid quota".format(t))
-                    time.sleep(t)
+                reason = error._get_reason().lower().replace(' ','')
+                if 'ratelimitexceeded' not in reason:
+                    return
+                time.sleep(2**i + random.random())
 
     def get(self, id):
         '''

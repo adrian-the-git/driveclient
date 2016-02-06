@@ -106,7 +106,7 @@ class DriveClient(object):
             except HttpError as error:
                 if error.resp.reason in ['userRateLimitExceeded', 'quotaExceeded']:
                     t = 2**i + random.random()
-                    log("sleep: {}s to avoid quota".format(t)
+                    log("sleep: {}s to avoid quota".format(t))
                     time.sleep(t)
         log("error: {}: {} failed".format(request.method, request.uri))
 

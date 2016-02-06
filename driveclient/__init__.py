@@ -12,9 +12,7 @@ import argparse
 import csv
 import os
 import json
-from functools import wraps
-from threading import Semaphore, Timer
-
+import random
 
 import httplib2
 import oauth2client
@@ -36,8 +34,7 @@ class DriveClient(object):
     '''
     def __init__(self, name, client_secret_filename=CLIENT_SECRET_FILENAME,
                  cached_credentials_filename=CACHED_CREDENTIALS_FILENAME,
-                 scopes=SCOPES, service_account_json_filename=None,
-                 limit_service_calls_per_second=10):
+                 scopes=SCOPES, service_account_json_filename=None)
         '''
         If a service_account_json_filename is provided, a private key will be
         used instead of the user-assisted OAuth flow which requires a browser.
@@ -57,8 +54,6 @@ class DriveClient(object):
         self.service_account_json_filename = service_account_json_filename
         self.flags,_ = argparse.ArgumentParser(parents=[tools.argparser]).parse_known_args()
 
-        self.quota = Semaphore(limit_service_calls_per_second)
-
     @property
     def http(self):
         '''
@@ -73,18 +68,10 @@ class DriveClient(object):
     def service(self):
         '''
         Use apiclient's service discovery to get a drive api service object
-        from which to make drive api calls. The limit_service_calls_per_second
-        param of the DriveClient instance determines how frequently this 
-        property can be accessed. Use this to stay under quota limits.
+        from which to make drive api calls.
         '''
-        self.quota.acquire()
-
         try: self._service
         except AttributeError: self._service = discovery.build('drive', 'v2', http=self.http)
-
-        timer = Timer(1, self.quota.release)
-        timer.setDaemon(True)
-        timer.start()
         return self._service
 
     @property
@@ -109,21 +96,31 @@ class DriveClient(object):
                 credentials = tools.run_flow(flow, store, self.flags)
         return credentials
 
+    def execute(self, request):
+        '''
+        Execute a request with simple exponential backoff
+        '''
+        for i in range(5):
+            try:
+                return request.execute()
+            except HttpError as error:
+                if error.resp.reason in ['userRateLimitExceeded', 'quotaExceeded']:
+                    t = 2**i + random.random()
+                    log("sleep: {}s to avoid quota".format(t)
+                    time.sleep(t)
+        log("error: {}: {} failed".format(request.method, request.uri))
+
     def get(self, id):
         '''
         Get a file by its globally unique id.
         '''
-        try:
-            return DriveObject(self, self.service.files().get(fileId=id).execute())
-        except HttpError: pass
+        return DriveObject(self, self.execute(self.service.files().get(fileId=id)))
 
     def change(self, changeId):
         '''
         Get a file by its ephemeral change id.
         '''
-        try:
-            return DriveObject(self, self.service.changes().get(changeId=changeId).execute()['file'])
-        except HttpError: pass
+        return DriveObject(self, self.execute(self.service.changes().get(changeId=changeId))['file'])
 
     def query(self, q, parent=None, maxResults=1000, limit=1000):
         '''
@@ -137,10 +134,10 @@ class DriveClient(object):
         }
         if parent:
             params['folderId'] = parent.id if isinstance(parent, DriveObject) else parent
-            filerefs = self.service.children().list(**params).execute()['items']
-            files = [DriveObject(self, self.service.files().get(fileId=child['id']).execute()) for child in filerefs]
+            filerefs = self.execute(self.service.children().list(**params))['items']
+            files = [self.get(child['id']) for child in filerefs]
         else:
-            files = [DriveObject(self, f) for f in self.service.files().list(**params).execute()['items']]
+            files = [DriveObject(self, f) for f in self.execute(self.service.files().list(**params))['items']]
         if maxResults > 1:                  # Caller expects a list which can be empty
             return files
         return files[0] if files else None

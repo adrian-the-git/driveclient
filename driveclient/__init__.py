@@ -34,7 +34,7 @@ class DriveClient(object):
     '''
     def __init__(self, name, client_secret_filename=CLIENT_SECRET_FILENAME,
                  cached_credentials_filename=CACHED_CREDENTIALS_FILENAME,
-                 scopes=SCOPES, service_account_json_filename=None)
+                 scopes=SCOPES, service_account_json_filename=None):
         '''
         If a service_account_json_filename is provided, a private key will be
         used instead of the user-assisted OAuth flow which requires a browser.

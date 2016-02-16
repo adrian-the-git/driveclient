@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name='driveclient',
-    version='0.1',
+    version='v0.3',
     description='A simple Google Drive API Client which exposes minimal read-only features',
     url='http://github.com/adrian-the-git/driveclient',
     author='Adrian Carpenter',

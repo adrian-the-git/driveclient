@@ -22,6 +22,7 @@ import oauth2client
 from apiclient import discovery
 from googleapiclient.errors import HttpError
 from oauth2client import client, tools
+from oauth2client.service_account import ServiceAccountCredentials
 
 
 CLIENT_SECRET_FILENAME = 'client_secret.json'
@@ -101,11 +102,7 @@ class DriveClient(object):
         credentials = store.get()
         if not credentials or credentials.invalid:
             if self.service_account_json_filename:
-                with open(self.service_account_json_filename) as f:
-                    account_info = json.load(f)
-                email = account_info['client_email']
-                key = account_info['private_key'].encode('utf8')
-                credentials = client.SignedJwtAssertionCredentials(email, key, self.scopes)
+                credentials = ServiceAccountCredentials.from_json_keyfile_name(self.service_account_json_filename, self.scopes)
                 store.put(credentials)
             else:
                 flow = client.flow_from_clientsecrets(self.client_secret_filename, self.scopes)

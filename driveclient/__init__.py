@@ -14,6 +14,8 @@ import os
 import json
 import random
 import time
+from pprint import pprint
+from urllib.parse import parse_qs, urlparse
 
 import httplib2
 import oauth2client
@@ -25,6 +27,20 @@ from oauth2client import client, tools
 CLIENT_SECRET_FILENAME = 'client_secret.json'
 CACHED_CREDENTIALS_FILENAME = 'drive_client.json'
 SCOPES = 'https://www.googleapis.com/auth/drive.readonly'
+DEBUG = 'DRIVECLIENT_DEBUG' in os.environ
+
+
+def dump_request(request):
+    '''
+    Print some noisy but useful information about a request.
+    '''
+    print('driveclient:', request.methodId)
+    print(request.method, request.uri)
+    if request.method == 'GET':
+        pprint(parse_qs(urlparse(request.uri).query))
+    elif request.method in ('PUT', 'POST'):
+        pprint(request.body)
+    print()
 
 
 class DriveClient(object):
@@ -101,6 +117,9 @@ class DriveClient(object):
         '''
         Execute a request with simple exponential backoff
         '''
+        if DEBUG:
+            dump_request(request)
+
         for i in range(5):
             try:
                 return request.execute()
@@ -109,19 +128,27 @@ class DriveClient(object):
                 if 'ratelimitexceeded' in reason:
                     time.sleep(2**i + random.random())
                     continue
+                elif 'notfound' in reason:
+                    return
+                elif 'invalidchange' in reason:
+                    return
                 raise
 
     def get(self, id):
         '''
         Get a file by its globally unique id.
         '''
-        return DriveObject(self, self.execute(self.service.files().get(fileId=id)))
+        result = self.execute(self.service.files().get(fileId=id))
+        if result:
+            return DriveObject(self, result)
 
-    def change(self, changeId):
+    def get_change(self, changeId):
         '''
         Get a file by its ephemeral change id.
         '''
-        return DriveObject(self, self.execute(self.service.changes().get(changeId=changeId))['file'])
+        result = self.execute(self.service.changes().get(changeId=changeId))
+        if result:
+            return DriveObject(self, result['file'])
 
     def query(self, q, parent=None, maxResults=1000, limit=1000):
         '''
@@ -224,25 +251,25 @@ class DriveFolder(DriveObject):
         '''
         Get files by one or more mime_types
         '''
-        q = 'mimeType != "{}"'.format(DriveObject.folder_type)
+        q = 'mimeType != "{}" and trashed=false'.format(DriveObject.folder_type)
         if mime_types:
             if isinstance(mime_types, str):
                 mime_types = [mime_types]
-            q = '({})'.format(' or '.join('mimeType="{}"'.format(t) for t in mime_types))
+            q = '({}) and trashed=false'.format(' or '.join('mimeType="{}"'.format(t) for t in mime_types))
         return self.client.query(q, parent=self)
 
     def file(self, name):
         '''
         Get a single child file by name
         '''
-        q = 'mimeType != "{}" and title = "{}"'.format(DriveObject.folder_type, name)
+        q = 'mimeType != "{}" and title = "{}" and trashed=false'.format(DriveObject.folder_type, name)
         return self.client.query(q, parent=self, maxResults=1)
 
     def folder(self, name):
         '''
         Get a single child folder by name
         '''
-        q = 'mimeType = "{}" and title = "{}"'.format(DriveObject.folder_type, name)
+        q = 'mimeType = "{}" and title = "{}" and trashed=false'.format(DriveObject.folder_type, name)
         return self.client.query(q, parent=self, maxResults=1)
 
     @property

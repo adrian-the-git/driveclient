@@ -102,7 +102,7 @@ class DriveClient(object):
         credentials = store.get()
         if not credentials or credentials.invalid:
             if self.service_account_json_filename:
-                credentials = ServiceAccountCredentials.from_json_keyfile_name(self.service_account_json_filename, self.scopes)
+                credentials = ServiceAccountCredentials.from_json_keyfile_name(self.service_account_json_filename, scopes=self.scopes)
                 store.put(credentials)
             else:
                 flow = client.flow_from_clientsecrets(self.client_secret_filename, self.scopes)
@@ -114,8 +114,7 @@ class DriveClient(object):
         '''
         Execute a request with simple exponential backoff
         '''
-        if DEBUG:
-            dump_request(request)
+        DEBUG and dump_request(request)
 
         for i in range(5):
             try:

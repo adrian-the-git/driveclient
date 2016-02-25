@@ -182,12 +182,17 @@ class DriveClient(object):
         q = 'title="{}" and mimeType="{}" and trashed=false'.format(name, DriveObject.folder_type)
         return self.get(id) if id else self.query(q, maxResults=1)
 
-    def write(self, name='', id='', folder=None, bytestring=b'', mimetype='text/plain', replace=True, convert=True):
+    def write(self, name='', folder=None, bytestring=b'', mimetype='text/plain', replace=True, convert=True, id=''):
         '''
-        Write file data (given as bytes).
+        Write file data (given as bytes). Specify either a filename and folder
+        OR a file id. Folder defaults to root when not specified with filename.
 
         Despite the apparent simplicity of this function, the semantics of
-        uploading and converting files are fairly subtle and complicated.
+        uploading and converting files are fairly subtle and complicated. For
+        example, files can only be updated if their mime-type remains unchanged,
+        so we must first delete the file and re-insert it. This will fail if
+        the file is owned by another account.
+
         There are probably corner cases where the convert flag will not work,
         so set the DRIVECLIENT_DEBUG environment variable if you run into
         problems.
@@ -286,6 +291,44 @@ class DriveFile(DriveObject):
             return
         with open(path, 'wb') as file:
             file.write(self.data)
+
+    def _write(self, **kw):
+        drive_object = self.client.write(**kw)
+        if drive_object:
+            self.attributes = drive_object.attributes
+            drive_object = self
+        return drive_object
+
+    def write(self, bytestring, mimetype, replace=True, convert=False):
+        '''
+        Write a bytestring to this file. A mimetype is required.
+        '''
+        return self._write(id=self.id, bytestring=bytestring,
+            mimetype=mimetype, replace=replace, convert=convert)
+
+    def write_text(self, text, **kw):
+        '''
+        Write text to this file, converting to a google doc if necessary
+        '''
+        return self._write(id=self.id, bytestring=text.encode(),
+            mimetype='text/plain', **kw)
+
+    def write_html(self, html, **kw):
+        '''
+        Write html to this file, converting to a google doc if necessary
+        '''
+        return self._write(id=self.id, bytestring=html.encode('ascii', 'xmlcharrefreplace'),
+            mimetype='text/html', **kw)
+
+    def write_file(self, filename, mimetype=None, replace=True, convert=False):
+        '''
+        Upload a file to replace this. Mimetype will be guessed if not supplied.
+        '''
+        if not mimetype:
+            mimetype = mimetypes.guess_type(filename)[0] or 'text/plain'
+        with open(filename, 'rb') as f:
+            return self._write(id=self.id, bytestring=f.read(),
+                mimetype=mimetype, replace=replace, convert=convert)
 
     @property
     def data(self):

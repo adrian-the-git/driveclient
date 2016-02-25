@@ -121,6 +121,15 @@ class DriveClient(object):
                     return
                 raise
 
+    @property
+    def root(self):
+        '''
+        Return the root folder
+        '''
+        about = self.execute(self.service.about().get())
+        if about:
+            return self.folder(id=about['rootFolderId'])
+
     def get(self, id):
         '''
         Get a file by its globally unique id.

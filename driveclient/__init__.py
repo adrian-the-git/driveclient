@@ -1,25 +1,29 @@
 """
-Abstracts away much of what's needed for read-only access to Google Drive via
-its API, simplifying the common case of reading data from documents,
-spreadsheets, and downloading images.
+Abstracts away much of what's needed for using Google Drive via its API, 
+simplifying the common case of reading data from documents, spreadsheets, 
+and downloading images. Basic file uploading is supported.
 
 DriveClient instances contain a service property which can be used to access
-the full API as the authenticated user. In order to make changes, set an
-appropriate read/write scope when instantiating a client.
+the full v2 API as an authenticated user. Be aware that many functions return
+None upon failure (rather than raising exceptions) so you should always check
+for truthy results before proceeding.
 """
 
 import argparse
 import csv
 import os
 import json
+import mimetypes
 import random
 import time
+from io import BytesIO
 from pprint import pprint
 from urllib.parse import parse_qs, urlparse
 
 import httplib2
 import oauth2client
 from apiclient import discovery
+from apiclient.http import MediaIoBaseUpload
 from googleapiclient.errors import HttpError
 from oauth2client import client, tools
 from oauth2client.service_account import ServiceAccountCredentials
@@ -27,21 +31,8 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 CLIENT_SECRET_FILENAME = 'client_secret.json'
 CACHED_CREDENTIALS_FILENAME = 'drive_client.json'
-SCOPES = 'https://www.googleapis.com/auth/drive.readonly'
+SCOPES = 'https://www.googleapis.com/auth/drive'
 DEBUG = 'DRIVECLIENT_DEBUG' in os.environ
-
-
-def dump_request(request):
-    '''
-    Print some noisy but useful information about a request.
-    '''
-    print('driveclient:', request.methodId)
-    print(request.method, request.uri)
-    if request.method == 'GET':
-        pprint(parse_qs(urlparse(request.uri).query))
-    elif request.method in ('PUT', 'POST'):
-        pprint(request.body)
-    print()
 
 
 class DriveClient(object):
@@ -148,7 +139,7 @@ class DriveClient(object):
 
     def query(self, q, parent=None, maxResults=1000, limit=1000):
         '''
-        Perform a query, optionally limited by a single parent and/or maxResults
+        Perform a query, optionally limited by a single parent and/or maxResults.
         '''
         maxResults = min(maxResults, limit) # "limit" is more pythonic; accept either
         params = {
@@ -168,17 +159,60 @@ class DriveClient(object):
 
     def file(self, name='', id=''):
         '''
-        Get a single file by name or id
+        Get a single file by name or id.
         '''
         q = 'title="{}" and mimeType!="{}" and trashed=false'.format(name, DriveObject.folder_type)
         return self.get(id) if id else self.query(q, maxResults=1)
 
     def folder(self, name='', id=''):
         '''
-        Get a single folder by name or id
+        Get a single folder by name or id.
         '''
         q = 'title="{}" and mimeType="{}" and trashed=false'.format(name, DriveObject.folder_type)
         return self.get(id) if id else self.query(q, maxResults=1)
+
+    def write(self, name, folder, bytestring, mimetype='text/plain', replace=True, convert=True):
+        '''
+        Write file data (given as bytes) to a given folder.
+
+        Despite the apparent simplicity of this function, the semantics of
+        uploading and converting files are fairly subtle and complicated.
+        There are probably corner cases where the convert flag will not work,
+        so set the DRIVECLIENT_DEBUG environment variable if you run into
+        problems.
+        '''
+        if isinstance(folder, str):
+            folder = self.folder(name=folder)
+            if not folder:
+                return
+
+        params = {
+            'body': {
+                'title': name,
+                'parents': [{'id': folder.id}]
+            },
+            'convert': convert,
+            'media_body': MediaIoBaseUpload(BytesIO(bytestring), mimetype=mimetype),
+        }
+
+        existing_file = folder.file(name)
+        if existing_file and not replace:
+            DEBUG and print('driveclient: not replacing "{}" in "{}"'.format(name, folder.title))
+            return
+        if existing_file:
+            if ((not convert and 'google-apps' in existing_file.mimeType) or
+                (convert and not 'google-apps' in existing_file.mimeType)):
+                try:
+                    DEBUG and print('driveclient: deleting "{}" from "{}" for type conversion'.format(name, folder.title))
+                    self.execute(self.service.files().delete(fileId=existing_file.id))
+                except HttpError:
+                    DEBUG and print('driveclient: can\'t replace "{}" in "{}" for type conversion'.format(name, folder.title))
+                    return
+            else:
+                DEBUG and print('driveclient: updating "{}" in "{}"'.format(name, folder.title))
+                return self.execute(self.service.files().update(fileId=existing_file.id, **params))
+        DEBUG and print('driveclient: inserting "{}" in "{}"'.format(name, folder.title))
+        return self.execute(self.service.files().insert(**params))
 
 
 class DriveObject(object):
@@ -268,6 +302,33 @@ class DriveFolder(DriveObject):
         q = 'mimeType = "{}" and title = "{}" and trashed=false'.format(DriveObject.folder_type, name)
         return self.client.query(q, parent=self, maxResults=1)
 
+    def write(self, name, bytestring, mimetype, replace=True, convert=False):
+        '''
+        Write a bytestring to this folder. A mimetype is required.
+        '''
+        return self.client.write(name, self, bytestring, mimetype=mimetype, replace=replace, convert=convert)
+
+    def write_text(self, name, text, **kw):
+        '''
+        Write text to this folder, converting to a google doc
+        '''
+        return self.client.write(name, self, text.encode(), mimetype='text/plain', **kw)
+
+    def write_html(self, name, html, **kw):
+        '''
+        Write html to this folder, converting to a google doc
+        '''
+        return self.client.write(name, self, html.encode('ascii', 'xmlcharrefreplace'), mimetype='text/html', **kw)
+
+    def write_file(self, filename, mimetype=None, replace=True, convert=False):
+        '''
+        Upload a file to this folder. Mimetype will be guessed if not supplied.
+        '''
+        if not mimetype:
+            mimetype = mimetypes.guess_type(filename)[0] or 'text/plain'
+        with open(filename, 'rb') as f:
+            return self.client.write(os.path.basename(filename), self, f.read(), mimetype=mimetype, replace=replace, convert=convert)
+
     @property
     def files(self):
         return self.files_of_type()
@@ -285,5 +346,16 @@ class DriveFolder(DriveObject):
         return self.files_of_type(['image/jpeg', 'image/png', 'image/gif', 'image/tiff', 'image/svg+xml'])
 
 
+def dump_request(request):
+    '''
+    Print some noisy but useful information about a request.
+    '''
+    print('driveclient:', request.methodId)
+    print(request.method, request.uri)
+    if request.method == 'GET':
+        pprint(parse_qs(urlparse(request.uri).query))
+    elif request.method in ('PUT', 'POST'):
+        pprint(request.body)
+    print()
 
 

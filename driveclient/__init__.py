@@ -14,6 +14,7 @@ for truthy results before proceeding.
 import argparse
 import csv
 import os
+import hashlib
 import json
 import mimetypes
 import random
@@ -284,10 +285,16 @@ class DriveFile(DriveObject):
 
     def save_as(self, filename, replace=True):
         path = os.path.abspath(os.path.expanduser(filename))
-        if not replace and os.path.exists(path):
-            return
+        if os.path.exists(path):
+            if not replace:
+                DEBUG and print('driveclient: not replacing local file "{}"'.format(path))
+                return
+            if self.md5Checksum and self.md5Checksum == hashfile(path, hashlib.md5()):
+                DEBUG and print('driveclient: not replacing local file "{}" with same hash'.format(path))
+                return
         with open(path, 'wb') as file:
             file.write(self.data)
+        DEBUG and print('driveclient: saved local file "{}"'.format(path))
 
     def _write(self, **kw):
         drive_object = self.client.write(**kw)
@@ -426,5 +433,19 @@ def dump_request(request):
     elif request.method in ('PUT', 'POST'):
         pprint(request.body)
     print()
+
+
+def hashfile(filename, hasher=None, blocksize=2**16):
+    '''
+    Hash a file without reading the entire thing into memory
+    '''
+    if hasher is None:
+        hasher = hashlib.sha1()
+    with open(filename, 'rb') as f:
+        buf = f.read(blocksize)
+        while len(buf) > 0:
+            hasher.update(buf)
+            buf = f.read(blocksize)
+        return hasher.hexdigest()
 
 

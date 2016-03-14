@@ -146,22 +146,18 @@ class DriveClient(object):
         if result:
             return DriveObject(self, result['file'])
 
-    def query(self, q, parent=None, maxResults=1000, limit=1000):
+    def query(self, q, parent=None, maxResults=1000):
         '''
         Perform a query, optionally limited by a single parent and/or maxResults.
         '''
-        maxResults = min(maxResults, limit) # "limit" is more pythonic; accept either
+        if parent:
+            q = '"{}" in parents and ({})'.format(parent.id if isinstance(parent, DriveObject) else parent, q)
         params = {
             'maxResults': maxResults,
             'orderBy': 'modifiedDate desc',
             'q': q,
         }
-        if parent:
-            params['folderId'] = parent.id if isinstance(parent, DriveObject) else parent
-            filerefs = self.execute(self.service.children().list(**params))['items']
-            files = [self.get(child['id']) for child in filerefs]
-        else:
-            files = [DriveObject(self, f) for f in self.execute(self.service.files().list(**params))['items']]
+        files = [DriveObject(self, f) for f in self.execute(self.service.files().list(**params))['items']]
         if maxResults > 1:                  # Caller expects a list which can be empty
             return files
         return files[0] if files else None

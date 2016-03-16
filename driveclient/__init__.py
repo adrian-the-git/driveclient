@@ -19,6 +19,7 @@ import json
 import mimetypes
 import random
 import time
+from functools import partial
 from io import BytesIO
 from pprint import pprint
 from urllib.parse import parse_qs, urlparse
@@ -435,13 +436,9 @@ def hashfile(filename, hasher=None, blocksize=2**16):
     '''
     Hash a file without reading the entire thing into memory
     '''
-    if hasher is None:
-        hasher = hashlib.sha1()
+    hasher = hasher or hashlib.sha1()
     with open(filename, 'rb') as f:
-        buf = f.read(blocksize)
-        while len(buf) > 0:
-            hasher.update(buf)
-            buf = f.read(blocksize)
+        [hasher.update(block) for block in iter(partial(f.read, blocksize), b'')]
         return hasher.hexdigest()
 
 

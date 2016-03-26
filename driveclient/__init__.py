@@ -292,6 +292,7 @@ class DriveFile(DriveObject):
         with open(path, 'wb') as file:
             file.write(self.data)
         DEBUG and print('driveclient: saved local file "{}"'.format(path))
+        return path
 
     def _write(self, **kw):
         drive_object = self.client.write(**kw)

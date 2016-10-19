@@ -108,7 +108,7 @@ class DriveClient(object):
         '''
         DEBUG and dump_request(request)
 
-        for i in range(5):
+        for i in range(10):
             try:
                 return request.execute()
             except HttpError as error:

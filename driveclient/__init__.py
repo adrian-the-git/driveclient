@@ -147,21 +147,36 @@ class DriveClient(object):
         if result:
             return DriveObject(self, result['file'])
 
-    def query(self, q, parent=None, maxResults=1000):
+    def query(self, q, parent=None, maxResults=None):
         '''
         Perform a query, optionally limited by a single parent and/or maxResults.
         '''
         if parent:
             q = '"{}" in parents and ({})'.format(parent.id if isinstance(parent, DriveObject) else parent, q)
         params = {
-            'maxResults': maxResults,
             'orderBy': 'modifiedDate desc',
             'q': q,
         }
-        files = [DriveObject(self, f) for f in self.execute(self.service.files().list(**params))['items']]
-        if maxResults > 1:                  # Caller expects a list which can be empty
+
+        files = []
+        next_page_token = None
+        while True:
+            if next_page_token:
+                params['pageToken'] = next_page_token
+            if maxResults:
+                params['maxResults'] = min(1000, maxResults - len(files))
+
+            res = self.execute(self.service.files().list(**params))
+            files.extend(DriveObject(self, f) for f in res['items'])
+            next_page_token = res.get('nextPageToken')
+
+            # Either there are no further pages, or the requested number have been fetched
+            if not next_page_token or len(files) == maxResults:
+                break
+
+        if maxResults != 1:                 # Caller expects a list
             return files
-        return files[0] if files else None
+        return files[0] if files else None  # Caller expects a single item
 
     def file(self, name='', id=''):
         '''

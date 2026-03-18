@@ -86,7 +86,7 @@ class DriveClient:
         """Execute a request with exponential backoff."""
         return execute_with_backoff(request)
 
-    # ── Fetching ──
+    # -- Fetching --
 
     @property
     def root(self):
@@ -160,7 +160,7 @@ class DriveClient:
         q = 'name="{}" and mimeType="{}" and trashed=false'.format(name, MIME_FOLDER)
         return self.query(q, page_size=1)
 
-    # ── Copying ──
+    # -- Copying --
 
     def copy(self, file_id, name=None, parent_id=None):
         """
@@ -178,7 +178,7 @@ class DriveClient:
         if result:
             return DriveObject(self, result)
 
-    # ── Writing ──
+    # -- Writing --
 
     def write(self, name='', folder=None, bytestring=b'', mimetype='text/plain',
               replace=True, convert=False, id=''):

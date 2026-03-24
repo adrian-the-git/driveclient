@@ -6,6 +6,8 @@ from unittest.mock import MagicMock, patch, mock_open
 
 import pytest
 
+from google.auth.exceptions import RefreshError
+
 from driveclient.auth import get_credentials, DEFAULT_SCOPES
 
 
@@ -72,9 +74,60 @@ class TestOAuthFlow:
         mock_creds.expired = True
         mock_creds.refresh_token = 'refresh_token'
         mock_creds.to_json.return_value = '{}'
+        # After refresh() succeeds, valid becomes True
+        def mark_valid(request):
+            mock_creds.valid = True
+        mock_creds.refresh.side_effect = mark_valid
         mock_from_file.return_value = mock_creds
 
         result = get_credentials('myapp')
 
         mock_creds.refresh.assert_called_once()
         assert result is mock_creds
+
+    @patch('driveclient.auth.os.path.exists', return_value=True)
+    @patch('driveclient.auth.os.makedirs')
+    @patch('driveclient.auth.Credentials.from_authorized_user_file')
+    @patch('driveclient.auth.Request')
+    @patch('driveclient.auth.InstalledAppFlow.from_client_secrets_file')
+    @patch('builtins.open', mock_open())
+    def test_refresh_failure_falls_back_to_oauth(self, mock_flow_cls, mock_request_cls,
+                                                  mock_from_file, mock_makedirs, mock_exists):
+        mock_creds = MagicMock()
+        mock_creds.valid = False
+        mock_creds.expired = True
+        mock_creds.refresh_token = 'refresh_token'
+        mock_creds.refresh.side_effect = RefreshError('No access token in response.')
+        mock_from_file.return_value = mock_creds
+
+        new_creds = MagicMock()
+        new_creds.to_json.return_value = '{}'
+        mock_flow = MagicMock()
+        mock_flow.run_local_server.return_value = new_creds
+        mock_flow_cls.return_value = mock_flow
+
+        result = get_credentials('myapp')
+
+        mock_creds.refresh.assert_called_once()
+        mock_flow.run_local_server.assert_called_once_with(port=0)
+        assert result is new_creds
+
+    @patch('driveclient.auth.os.path.exists', return_value=True)
+    @patch('driveclient.auth.os.makedirs')
+    @patch('driveclient.auth.Credentials.from_authorized_user_file')
+    @patch('driveclient.auth.InstalledAppFlow.from_client_secrets_file')
+    @patch('builtins.open', mock_open())
+    def test_corrupt_cache_falls_back_to_oauth(self, mock_flow_cls, mock_from_file,
+                                                mock_makedirs, mock_exists):
+        mock_from_file.side_effect = ValueError('invalid json')
+
+        new_creds = MagicMock()
+        new_creds.to_json.return_value = '{}'
+        mock_flow = MagicMock()
+        mock_flow.run_local_server.return_value = new_creds
+        mock_flow_cls.return_value = mock_flow
+
+        result = get_credentials('myapp')
+
+        mock_flow.run_local_server.assert_called_once_with(port=0)
+        assert result is new_creds

@@ -10,6 +10,7 @@ Replaces oauth2client with modern credential handling:
 import json
 import os
 
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2 import service_account
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -47,12 +48,18 @@ def get_credentials(name, client_secret_filename=CLIENT_SECRET_FILENAME,
 
     creds = None
     if os.path.exists(cached_path):
-        creds = Credentials.from_authorized_user_file(cached_path, scopes)
+        try:
+            creds = Credentials.from_authorized_user_file(cached_path, scopes)
+        except (ValueError, KeyError):
+            creds = None
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
+            try:
+                creds.refresh(Request())
+            except RefreshError:
+                creds = None
+        if not creds or not creds.valid:
             flow = InstalledAppFlow.from_client_secrets_file(
                 client_secret_filename, scopes
             )

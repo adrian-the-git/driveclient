@@ -22,13 +22,30 @@ if datetime.date.today() >= EXPIRY:
         "Update your code to use the v2 API directly.".format(EXPIRY)
     )
 
-from . import client, objects
+from . import auth, client, objects
 from .client import DriveClient
 from .objects import DriveFile, DriveFolder
 
 
 def _warn(msg):
     warnings.warn(msg, DeprecationWarning, stacklevel=3)
+
+
+# ---------------------------------------------------------------------------
+# get_credentials: accept scopes as a single string
+# ---------------------------------------------------------------------------
+
+_original_get_credentials = auth.get_credentials
+
+@functools.wraps(_original_get_credentials)
+def _patched_get_credentials(*args, **kwargs):
+    scopes = kwargs.get('scopes')
+    if isinstance(scopes, str):
+        _warn("Passing scopes as a string is deprecated. Use a list: ['{}']".format(scopes))
+        kwargs['scopes'] = [scopes]
+    return _original_get_credentials(*args, **kwargs)
+
+auth.get_credentials = _patched_get_credentials
 
 
 # ---------------------------------------------------------------------------

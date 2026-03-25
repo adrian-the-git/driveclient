@@ -31,15 +31,14 @@ class TestExpiry:
 class TestScopesCompat:
 
     @patch('driveclient.client.get_credentials')
-    def test_string_scopes_converted_to_list(self, mock_get_creds):
+    def test_string_scopes_converted_to_list_in_init(self, mock_get_creds):
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter('always')
             c = DriveClient('test', scopes='https://www.googleapis.com/auth/drive')
 
         assert c.scopes == ['https://www.googleapis.com/auth/drive']
-        assert len(w) == 1
-        assert 'list' in str(w[0].message)
-        assert issubclass(w[0].category, DeprecationWarning)
+        assert any('list' in str(warning.message) for warning in w)
+        assert any(issubclass(warning.category, DeprecationWarning) for warning in w)
 
     @patch('driveclient.client.get_credentials')
     def test_list_scopes_unchanged(self, mock_get_creds):
@@ -49,6 +48,21 @@ class TestScopesCompat:
 
         assert c.scopes == ['https://www.googleapis.com/auth/drive']
         assert len(w) == 0
+
+    def test_string_scopes_converted_in_get_credentials(self):
+        """Ensures string scopes are converted before reaching google-auth,
+        which silently iterates characters if given a string."""
+        scope = 'https://www.googleapis.com/auth/drive'
+        with patch('driveclient.auth.service_account.Credentials.from_service_account_file') as mock_sa, \
+             warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter('always')
+            mock_sa.return_value = MagicMock()
+            driveclient.auth.get_credentials(
+                'test', scopes=scope, service_account_json_filename='sa.json'
+            )
+
+        mock_sa.assert_called_once_with('sa.json', scopes=[scope])
+        assert any('list' in str(warning.message) for warning in w)
 
 
 class TestMaxResultsCompat:

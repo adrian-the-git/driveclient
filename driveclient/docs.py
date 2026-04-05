@@ -93,7 +93,6 @@ class DocsService:
         if not source:
             return
 
-        # Get the tab to merge from
         if tab_id:
             source_tab = source.tab(tab_id)
         else:
@@ -103,13 +102,46 @@ class DocsService:
         if not source_tab:
             return
 
-        elements = source_tab.structural_elements
-        requests = _build_merge_requests(elements, target_id)
+        lists = source._data.get('lists') if source._data else None
+        requests = _build_copy_requests(source_tab, target_tab_id=None, lists=lists)
 
         if requests:
             return self.execute(
                 self.service.documents().batchUpdate(
                     documentId=target_id,
+                    body={'requests': requests}
+                )
+            )
+
+    def copy_to_tab(self, source_document_id, target_document_id,
+                    target_tab_id, source_tab_id=None):
+        """
+        Copy formatted content from a source document into a target tab.
+
+        Fetches the source document, extracts the specified tab (or first tab),
+        builds insert + style requests, and executes a batchUpdate on the target.
+        """
+        source = self.get(source_document_id)
+        if not source:
+            return
+
+        if source_tab_id:
+            source_tab = source.tab(source_tab_id)
+        else:
+            tabs = source.tabs
+            source_tab = tabs[0] if tabs else None
+
+        if not source_tab:
+            return
+
+        lists = source._data.get('lists') if source._data else None
+        requests = _build_copy_requests(source_tab, target_tab_id=target_tab_id,
+                                        lists=lists)
+
+        if requests:
+            return self.execute(
+                self.service.documents().batchUpdate(
+                    documentId=target_document_id,
                     body={'requests': requests}
                 )
             )
@@ -177,6 +209,29 @@ class Document:
             )
         )
 
+    def add_tab(self, title, index=None):
+        """Create a new tab and return its tabId."""
+        tab_properties = {'title': title}
+        if index is not None:
+            tab_properties['index'] = index
+        request = {'addDocumentTab': {'tabProperties': tab_properties}}
+        result = self.batch_update([request])
+        self._data = None  # invalidate cache
+        tab_id = (result.get('replies', [{}])[0]
+                  .get('addDocumentTab', {})
+                  .get('tabProperties', {})
+                  .get('tabId'))
+        return tab_id
+
+    def import_document(self, source_document_id, tab_title):
+        """Create a new tab and copy source document's content into it.
+        Returns the new tab_id."""
+        tab_id = self.add_tab(tab_title)
+        self.docs_service.copy_to_tab(
+            source_document_id, self.document_id, tab_id
+        )
+        return tab_id
+
     def __repr__(self):
         return '<Document "{}">'.format(self.title)
 
@@ -236,24 +291,95 @@ def _collect_tabs(raw_tab, result):
         _collect_tabs(child, result)
 
 
-def _build_merge_requests(elements, target_id):
-    """
-    Build InsertText + UpdateTextStyle batch requests to reproduce
-    structural elements from a source document into a target.
-    """
-    requests = []
-    # We insert at the end of the document; we need to track our insertion index.
-    # Start after the existing content by inserting at index 1 (after the initial newline).
-    # A more robust approach would read the target doc's endIndex, but for simplicity
-    # we append a newline separator first.
+_WRITABLE_TEXT_STYLE_FIELDS = frozenset({
+    'bold', 'italic', 'underline', 'strikethrough',
+    'foregroundColor', 'backgroundColor',
+    'fontSize', 'weightedFontFamily',
+    'link', 'baselineOffset', 'smallCaps',
+})
 
+_WRITABLE_PARAGRAPH_STYLE_FIELDS = frozenset({
+    'namedStyleType', 'alignment', 'lineSpacing',
+    'spaceAbove', 'spaceBelow',
+    'indentFirstLine', 'indentStart', 'indentEnd',
+    'direction', 'spacingMode',
+    'keepLinesTogether', 'keepWithNext',
+    'avoidWidowAndOrphan',
+})
+
+
+def _utf16_len(text):
+    """Count UTF-16 code units in text (for Docs API index tracking)."""
+    count = 0
+    for ch in text:
+        code = ord(ch)
+        if code > 0xFFFF:
+            count += 2
+        else:
+            count += 1
+    return count
+
+
+def _build_text_style_fields(text_style):
+    """Build a fields mask string from keys present in a textStyle dict."""
+    if not text_style:
+        return ''
+    return ','.join(
+        sorted(k for k in text_style if k in _WRITABLE_TEXT_STYLE_FIELDS)
+    )
+
+
+def _build_paragraph_style_fields(paragraph_style):
+    """Build a fields mask string from keys present in a paragraphStyle dict."""
+    if not paragraph_style:
+        return ''
+    return ','.join(
+        sorted(k for k in paragraph_style if k in _WRITABLE_PARAGRAPH_STYLE_FIELDS)
+    )
+
+
+def _resolve_bullet_preset(list_id, lists):
+    """Map a source list's glyphType to a bulletPreset string."""
+    if not lists or not list_id:
+        return 'BULLET_DISC_CIRCLE_SQUARE'
+    list_data = lists.get(list_id)
+    if not list_data:
+        return 'BULLET_DISC_CIRCLE_SQUARE'
+    nesting_levels = list_data.get('listProperties', {}).get('nestingLevels', [])
+    if not nesting_levels:
+        return 'BULLET_DISC_CIRCLE_SQUARE'
+    glyph_type = nesting_levels[0].get('glyphType', '')
+    ordered_types = {'DECIMAL', 'ALPHA', 'ROMAN',
+                     'UPPER_ALPHA', 'UPPER_ROMAN',
+                     'ZERO_DECIMAL'}
+    if glyph_type in ordered_types:
+        return 'NUMBERED_DECIMAL_ALPHA_ROMAN'
+    return 'BULLET_DISC_CIRCLE_SQUARE'
+
+
+def _build_copy_requests(source_tab, target_tab_id=None, lists=None):
+    """
+    Build batchUpdate requests to reproduce a source tab's content.
+
+    Returns insert requests followed by style requests. Inserts use
+    endOfSegmentLocation so they always append. Style requests reference
+    tracked index ranges computed from insertion offsets.
+    """
     insert_requests = []
     style_requests = []
+    offset = 1  # doc body starts with a structural element at index 0
+
+    elements = source_tab.structural_elements
 
     for element in elements:
         paragraph = element.get('paragraph')
         if not paragraph:
             continue
+
+        para_start = offset
+        paragraph_style = paragraph.get('paragraphStyle')
+        bullet = paragraph.get('bullet')
+
         for pe in paragraph.get('elements', []):
             text_run = pe.get('textRun')
             if not text_run:
@@ -262,16 +388,73 @@ def _build_merge_requests(elements, target_id):
             if not content:
                 continue
 
+            run_start = offset
+            run_len = _utf16_len(content)
+
+            location = {}
+            if target_tab_id is not None:
+                location['tabId'] = target_tab_id
+
             insert_requests.append({
                 'insertText': {
-                    'endOfSegmentLocation': {},
+                    'endOfSegmentLocation': location,
                     'text': content,
                 }
             })
 
+            offset += run_len
+
             text_style = text_run.get('textStyle')
             if text_style:
-                # We'll apply styles in a follow-up pass if needed
-                style_requests.append(text_style)
+                fields = _build_text_style_fields(text_style)
+                if fields:
+                    range_spec = {
+                        'startIndex': run_start,
+                        'endIndex': run_start + run_len,
+                    }
+                    if target_tab_id is not None:
+                        range_spec['tabId'] = target_tab_id
+                    style_requests.append({
+                        'updateTextStyle': {
+                            'textStyle': text_style,
+                            'fields': fields,
+                            'range': range_spec,
+                        }
+                    })
 
-    return insert_requests
+        para_end = offset
+
+        if paragraph_style:
+            fields = _build_paragraph_style_fields(paragraph_style)
+            if fields:
+                range_spec = {
+                    'startIndex': para_start,
+                    'endIndex': para_end,
+                }
+                if target_tab_id is not None:
+                    range_spec['tabId'] = target_tab_id
+                style_requests.append({
+                    'updateParagraphStyle': {
+                        'paragraphStyle': paragraph_style,
+                        'fields': fields,
+                        'range': range_spec,
+                    }
+                })
+
+        if bullet:
+            list_id = bullet.get('listId')
+            preset = _resolve_bullet_preset(list_id, lists)
+            range_spec = {
+                'startIndex': para_start,
+                'endIndex': para_end,
+            }
+            if target_tab_id is not None:
+                range_spec['tabId'] = target_tab_id
+            style_requests.append({
+                'createParagraphBullets': {
+                    'bulletPreset': preset,
+                    'range': range_spec,
+                }
+            })
+
+    return insert_requests + style_requests
